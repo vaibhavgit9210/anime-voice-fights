@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>SPATIOTEMPORAL BALLISTIC MANIFOLD</title>
+<style>
+  html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair}
+  #snd{
+    position:fixed;right:14px;bottom:12px;z-index:5;
+    background:transparent;color:rgba(255,255,255,.45);
+    border:1px solid rgba(255,255,255,.25);border-radius:2px;
+    font:10px ui-monospace,Menlo,monospace;letter-spacing:2px;
+    padding:5px 10px;cursor:pointer
+  }
+  #snd:hover{color:#fff;border-color:rgba(255,255,255,.6)}
+  #hint{
+    position:fixed;left:14px;bottom:12px;z-index:5;pointer-events:none;
+    color:rgba(255,255,255,.28);font:10px ui-monospace,Menlo,monospace;letter-spacing:2px
+  }
+  #v1{
+    position:fixed;left:14px;top:44px;z-index:5;text-decoration:none;
+    color:rgba(255,255,255,.35);font:10px ui-monospace,Menlo,monospace;letter-spacing:2px
+  }
+  #v1:hover{color:#fff}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="snd">SOUND: OFF</button>
+<div id="hint">CLICK TO REPLAY</div>
+<a id="v1" href="../">&larr; V1 &middot; LIVE VOICE MANIFOLD</a>
+
+<script>
+'use strict';
+/* ============================================================
+   SPATIOTEMPORAL BALLISTIC MANIFOLD
+   Two silhouettes. One shot. The head resolves into data:
+   40 cranial frequency coefficients, condensed by PCA into
+   three principal dimensions, rendered as a drifting manifold.
+   (After Lucio Arese's birdsong visualizations.)
+   Test hooks:  ?test  (seeded, auto)   &t=<sec>  (jump in loop)
+   ============================================================ */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, dpr = 1;
+
+const Q = new URLSearchParams(location.search);
+const TEST = Q.has('test');
+const T0_OFFSET = parseFloat(Q.get('t') || '0') || 0;
+
+/* seeded rng so ?test screenshots are reproducible */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let rng = mulberry32(TEST ? 42 : (Date.now() & 0xffffffff));
+const R  = () => rng();
+const RS = () => rng()*2-1;
+
+/* ---------------- timeline (seconds, one loop) -------------- */
+const TL = {
+  raiseA: 0.9,   // arm starts rising
+  raiseB: 1.55,  // arm level
+  bang:   1.9,   // trigger
+  settle: 2.6,   // burst decays into drift
+  organize: 5.5, // manifold fully self-organized
+  fade:  15.2,   // begin fade to black
+  total: 17.4
+};
+
+/* ---------------- world / camera ---------------------------- */
+/* world units: figures ~175 tall, ground at y=0, up = -y      */
+const SHOOTER_X = -150, VICTIM_X = 150;
+const HEAD = {x: VICTIM_X - 3, y: -168, z: 0};     // victim head at bang
+const cam = {x:0, y:-105, zoom:1, base:1};
+
+function easeIO(t){return t<0?0:t>1?1:t*t*(3-2*t)}
+function easeOut(t){return t<0?0:t>1?1:1-Math.pow(1-t,3)}
+function clamp(v,a,b){return v<a?a:v>b?b:v}
+function lerp(a,b,t){return a+(b-a)*t}
+
+/* ---------------- particles --------------------------------- */
+const N = 240;
+let pts = [];        // manifold particles
+let drops = [];      // ballistic droplets with gravity
+let stains = [];     // ground marks left by droplets
+let anchors = [];    // indices of highlighted nodes
+let traj = [];       // white trajectory polyline (anchor order)
+let links = [];      // recomputed pairs
+let linkTick = 0;
+
+function fmt(v, dec){ return v.toFixed(dec===undefined?4:dec) }
+
+function buildCloud(){
+  pts = []; drops = []; stains = []; anchors = []; traj = []; links = [];
+  /* cluster centers give the cloud lobed structure like the reference */
+  const CL = [];
+  for (let c=0;c<5;c++){
+    CL.push({ x: RS()*120, y: RS()*62 - 16, z: RS()*85,
+              sx: 26+R()*46, sy: 16+R()*30, sz: 22+R()*42 });
+  }
+  function gauss(){ return (R()+R()+R()-1.5)*0.9 }
+  for (let i=0;i<N;i++){
+    const c = CL[(i*CL.length/N)|0];
+    const tx = c.x + gauss()*c.sx, ty = c.y + gauss()*c.sy, tz = c.z + gauss()*c.sz;
+    /* burst velocity: radial + strong bias along the shot line (+x), slight lift */
+    let dx = RS(), dy = RS()*0.8 - 0.25, dz = RS();
+    dx = dx*0.9 + 1.15;                       // exit-wound bias, away from shooter
+    const m = Math.hypot(dx,dy,dz) || 1;
+    const sp = 90 + R()*260;
+    /* color regions: hue clusters spatially — green→yellow→orange→red, some white */
+    const hshift = clamp((tx+130)/260, 0, 1);
+    const hue = 115 - hshift*115 + RS()*14;
+    const white = R() < 0.16;
+    pts.push({
+      x: HEAD.x + RS()*7, y: HEAD.y + RS()*7, z: RS()*7,
+      vx: dx/m*sp, vy: dy/m*sp, vz: dz/m*sp,
+      tx: HEAD.x + tx, ty: HEAD.y + ty, tz: tz,
+      hue, white,
+      lab: fmt(R()),
+      hasLab: R() < 0.6,
+      big: false,
+      p0: R()*6.28, p1: R()*6.28, p2: R()*6.28,   // drift phases
+      amp: 1.5 + R()*3.5,
+      born: R()*2.2,                               // label stagger-in
+      s: white ? 1.6+R()*1.4 : 1.1+R()*1.3
+    });
+  }
+  /* anchors: bigger boxed nodes with sub-readouts */
+  const ai = new Set();
+  while (ai.size < 7) ai.add((R()*N)|0);
+  anchors = [...ai];
+  for (const i of anchors){
+    pts[i].big = true; pts[i].white = R()<0.6;
+    pts[i].sub = [ fmt(R()*0.4,2)+'k  '+fmt(R()*2.5,2)+'k', fmt(R()*40,1)+'.'+((R()*90)|0) ];
+  }
+  traj = anchors.slice(0, 5 + ((R()*3)|0));
+  /* heavy droplets: fall with gravity, mark the ground */
+  for (let i=0;i<16;i++){
+    const m2 = 1;
+    drops.push({
+      x: HEAD.x, y: HEAD.y, z: RS()*4,
+      vx: 60+R()*230, vy: RS()*70-50, vz: RS()*40,
+      lab: fmt(R()), done:false
+    });
+  }
+}
+
+/* ---------------- figures ----------------------------------- */
+function limb(px,py, ax,ay, bx,by){
+  ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+}
+/* silhouette pass: glowRim=true draws the faint anime rim-light */
+function figureStyle(rim){
+  if (rim){
+    ctx.strokeStyle = 'rgba(150,180,235,0.20)';
+    ctx.fillStyle   = 'rgba(150,180,235,0.10)';
+    ctx.lineWidth = 11;
+  } else {
+    ctx.strokeStyle = '#04060a';
+    ctx.fillStyle   = '#04060a';
+    ctx.lineWidth = 8;
+  }
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+}
+function drawShooter(t, alpha){
+  /* facing right; arm raises between raiseA..raiseB, recoil at bang */
+  let raise = easeIO((t - TL.raiseA)/(TL.raiseB - TL.raiseA));
+  let recoil = 0;
+  if (t > TL.bang) recoil = Math.max(0, 1-(t-TL.bang)*6) * 0.35;
+  if (t > TL.bang + 1.6) raise = 1 - easeIO((t - TL.bang - 1.6)/1.2); // lower gun
+  const armAng = lerp(1.15, 0, raise) + recoil;   // radians below horizontal
+
+  ctx.save();
+  ctx.translate(SHOOTER_X, 0);
+  ctx.globalAlpha = alpha;
+  for (const rim of [true,false]){
+    figureStyle(rim);
+    /* legs — duelist stance */
+    limb(-2,-92, -16,-48, -22,0);
+    limb(-2,-92,  14,-46,  20,0);
+    /* torso: tapered quad, slight forward lean */
+    ctx.beginPath();
+    ctx.moveTo(-10,-150); ctx.lineTo(8,-152); ctx.lineTo(7,-92); ctx.lineTo(-9,-90);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    /* coat flare */
+    ctx.beginPath();
+    ctx.moveTo(-9,-96); ctx.lineTo(9,-96); ctx.lineTo(15,-40); ctx.lineTo(-17,-42);
+    ctx.closePath(); ctx.fill();
+    /* back arm (bent, resting) */
+    limb(-6,-146, -18,-116, -8,-96);
+    /* gun arm */
+    const sx=6, sy=-148, L1=34, L2=30;
+    const ex = sx + Math.cos(armAng)*L1, ey = sy + Math.sin(armAng)*L1;
+    const hx = ex + Math.cos(armAng*0.65)*L2, hy = ey + Math.sin(armAng*0.65)*L2;
+    limb(sx,sy, ex,ey, hx,hy);
+    /* pistol */
+    ctx.save(); ctx.translate(hx,hy); ctx.rotate(armAng*0.4);
+    if (rim){
+      ctx.strokeStyle = 'rgba(170,200,245,0.45)';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(0,-4, 16,5); ctx.strokeRect(9,-1, 4,8);
+    } else {
+      ctx.fillRect(0,-4, 16,5); ctx.fillRect(9,-1, 4,8);
+    }
+    ctx.restore();
+    /* head */
+    ctx.beginPath(); ctx.arc(0,-165, 12.5, 0, 7); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+  /* muzzle world position for the flash */
+  const armAngW = armAng;
+  const ex = SHOOTER_X + 6 + Math.cos(armAngW)*34, ey = -148 + Math.sin(armAngW)*34;
+  return { mx: ex + Math.cos(armAngW*0.65)*30 + 16, my: ey + Math.sin(armAngW*0.65)*30 - 2 };
+}
+function drawVictim(t, alpha){
+  /* facing left; falls backward (screen right) after the shot   */
+  const fallT = easeIO((t - TL.bang)/1.15);
+  const settleBounce = t > TL.bang+1.15 ? Math.exp(-(t-TL.bang-1.15)*5)*Math.sin((t-TL.bang-1.15)*18)*0.04 : 0;
+  const ang = fallT * 1.52 + settleBounce;   // rotate about feet toward +x
+  const headless = t > TL.bang;
+
+  ctx.save();
+  ctx.translate(VICTIM_X + 20, 0);   // pivot on the trailing heel
+  ctx.rotate(ang);
+  ctx.translate(-20, 0);
+  ctx.globalAlpha = alpha;
+  for (const rim of [true,false]){
+    figureStyle(rim);
+    limb(2,-92,  16,-46,  22,0);
+    limb(2,-92, -12,-48, -18,0);
+    ctx.beginPath();
+    ctx.moveTo(-8,-152); ctx.lineTo(10,-150); ctx.lineTo(9,-90); ctx.lineTo(-7,-92);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    /* arms: loose at sides, flail slightly as he falls */
+    const fl = fallT*0.7;
+    limb(-4,-146, -16+fl*22,-114, -20+fl*34,-88+fl*10);
+    limb( 6,-146,  17,-114-fl*16,  12,-88-fl*26);
+    if (!headless){
+      ctx.beginPath(); ctx.arc(-2,-167, 12.5, 0, 7); ctx.fill(); ctx.stroke();
+    } else {
+      /* neck stub */
+      ctx.beginPath(); ctx.moveTo(-6,-152); ctx.lineTo(4,-153); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/* ---------------- projection -------------------------------- */
+const FOV = 620;
+let rotY = 0;
+function proj(x, y, z){
+  /* rotate manifold about its own centre, then camera transform */
+  const cxm = HEAD.x + 14, cym = HEAD.y - 6;
+  const dx = x - cxm, dz = z;
+  const c = Math.cos(rotY), s = Math.sin(rotY);
+  const rx = dx*c - dz*s, rz = dx*s + dz*c;
+  const sc = FOV / (FOV + rz*2.2);
+  const wx = cxm + rx*sc, wy = cym + (y - cym)*sc;
+  return {
+    x: (wx - cam.x)*cam.zoom + W/2,
+    y: (wy - cam.y)*cam.zoom + H/2,
+    sc: sc*cam.zoom, z: rz
+  };
+}
+function worldToScreen(x,y){
+  return { x:(x-cam.x)*cam.zoom + W/2, y:(y-cam.y)*cam.zoom + H/2 };
+}
+
+/* ---------------- HUD ---------------------------------------- */
+let hudVals = {a:0,b:0,c:0};
+let cfc = new Array(40).fill(0);
+function drawHUD(t, alive, gAlpha){
+  const M = 10;
+  ctx.save();
+  ctx.globalAlpha = gAlpha;
+  ctx.textBaseline = 'top';
+  /* top-left title */
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.font = '10px ui-monospace,Menlo,monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SPATIOTEMPORAL  BALLISTIC  MANIFOLD', 14, 12);
+  ctx.fillStyle = 'rgba(255,255,255,.28)';
+  ctx.fillText('40 CFC → PCA(3) · V0 BUILD', 14, 26);
+
+  /* top-right readouts */
+  ctx.textAlign = 'right';
+  const rx = W - 14;
+  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.fillText(fmt(hudVals.a,2)+'k', rx - 60, 12);
+  ctx.fillText(fmt(hudVals.b,2)+'k', rx, 12);
+  ctx.strokeStyle = 'rgba(255,60,50,.9)';
+  ctx.strokeRect(rx - 50, 11, 10, 10);
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.fillText('IMPACT SPREAD', rx - 148, 27);
+  ctx.fillText(fmt(hudVals.c,2), rx - 112, 27);
+  ctx.fillText('CRANIAL CENTROID', rx, 27);
+  ctx.fillText('EMISSION TIME', rx, 44);
+  /* emission timeline tick */
+  ctx.strokeStyle = 'rgba(255,255,255,.25)';
+  ctx.beginPath(); ctx.moveTo(rx-120, 58); ctx.lineTo(rx, 58); ctx.stroke();
+  if (alive){
+    const p = clamp((t - TL.bang)/(TL.fade - TL.bang),0,1);
+    ctx.fillStyle = 'rgba(255,80,60,.9)';
+    ctx.fillRect(rx-120 + p*118, 55, 2, 6);
+  }
+
+  /* right-hand CFC bar stack */
+  if (H > 560){
+    ctx.font = '7px ui-monospace,Menlo,monospace';
+    const rows = 40, y0 = 84, rh = Math.min(10, (H-160-y0)/rows);
+    for (let i=0;i<rows;i++){
+      const y = y0 + i*rh;
+      ctx.fillStyle = 'rgba(255,255,255,.25)';
+      ctx.fillText('CFC'+String(i+1).padStart(2,'0'), rx, y);
+      const w = cfc[i]*54;
+      ctx.fillStyle = 'rgba(170,150,255,.5)';
+      ctx.fillRect(rx - 34 - w, y+1.5, w, 2);
+    }
+  }
+
+  /* bottom caption, italic + letterspaced like the reference */
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.font = 'italic 19px Georgia, "Times New Roman", serif';
+  try { ctx.letterSpacing = '5px'; } catch(e){}
+  ctx.fillText('Subject B  (Homo Sapiens)', W/2, H - 52);
+  try { ctx.letterSpacing = '0px'; } catch(e){}
+  ctx.restore();
+}
+
+/* ---------------- audio -------------------------------------- */
+let AC = null, soundOn = false, padNodes = null, bangDone = false;
+const sndBtn = document.getElementById('snd');
+function audioInit(){ if (!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); }
+function bangSound(){
+  if (!soundOn || !AC) return;
+  const t = AC.currentTime;
+  /* crack: filtered noise burst */
+  const len = AC.sampleRate*0.4, buf = AC.createBuffer(1,len,AC.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len,2.2);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const lp = AC.createBiquadFilter(); lp.type='lowpass';
+  lp.frequency.setValueAtTime(6000,t); lp.frequency.exponentialRampToValueAtTime(180,t+0.35);
+  const g = AC.createGain(); g.gain.setValueAtTime(0.8,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+  /* canyon echo */
+  const dl = AC.createDelay(1); dl.delayTime.value = 0.21;
+  const fb = AC.createGain(); fb.gain.value = 0.32;
+  src.connect(lp); lp.connect(g); g.connect(AC.destination);
+  g.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(AC.destination);
+  /* thump */
+  const o = AC.createOscillator(); o.frequency.setValueAtTime(85,t);
+  o.frequency.exponentialRampToValueAtTime(35,t+0.4);
+  const og = AC.createGain(); og.gain.setValueAtTime(0.5,t); og.gain.exponentialRampToValueAtTime(0.001,t+0.45);
+  o.connect(og); og.connect(AC.destination);
+  src.start(t); o.start(t); o.stop(t+0.5);
+  setTimeout(startPad, 700);
+}
+function startPad(){
+  if (!soundOn || !AC || padNodes) return;
+  const t = AC.currentTime;
+  const g = AC.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.045,t+2.5);
+  const o1 = AC.createOscillator(); o1.frequency.value = 110;
+  const o2 = AC.createOscillator(); o2.frequency.value = 110.8;
+  const o3 = AC.createOscillator(); o3.frequency.value = 220.4;
+  const g3 = AC.createGain(); g3.gain.value = 0.3;
+  o1.connect(g); o2.connect(g); o3.connect(g3); g3.connect(g);
+  g.connect(AC.destination);
+  o1.start(); o2.start(); o3.start();
+  padNodes = {g,o1,o2,o3};
+}
+function stopPad(){
+  if (!padNodes || !AC) return;
+  const t = AC.currentTime, p = padNodes; padNodes = null;
+  p.g.gain.linearRampToValueAtTime(0, t+1.2);
+  setTimeout(()=>{ try{p.o1.stop();p.o2.stop();p.o3.stop();}catch(e){} }, 1400);
+}
+function blip(){
+  if (!soundOn || !AC || R()>0.5) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator(); o.frequency.value = 2200 + R()*2200;
+  const g = AC.createGain(); g.gain.setValueAtTime(0.018,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.05);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t+0.06);
+}
+sndBtn.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  audioInit();
+  soundOn = !soundOn;
+  sndBtn.textContent = 'SOUND: ' + (soundOn?'ON':'OFF');
+  if (!soundOn) stopPad();
+});
+
+/* ---------------- physics step -------------------------------- */
+function physics(t, dt){
+  const organizing = easeIO((t - TL.settle)/(TL.organize - TL.settle));
+  for (const p of pts){
+    /* burst → damped; then ease toward manifold target + drift */
+    p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
+    const damp = Math.exp(-dt*4.2);
+    p.vx*=damp; p.vy*=damp; p.vz*=damp;
+    if (organizing > 0){
+      const k = 0.9*dt*organizing;
+      p.x += (p.tx + Math.sin(t*0.5+p.p0)*p.amp - p.x)*k;
+      p.y += (p.ty + Math.sin(t*0.43+p.p1)*p.amp - p.y)*k;
+      p.z += (p.tz + Math.sin(t*0.37+p.p2)*p.amp - p.z)*k;
+    }
+  }
+  for (const d of drops){
+    if (d.done) continue;
+    d.vy += 420*dt;
+    d.x += d.vx*dt; d.y += d.vy*dt; d.z += d.vz*dt;
+    if (d.y >= 0){
+      d.y = 0; d.done = true;
+      stains.push({x:d.x, z:d.z, lab:d.lab, at:t});
+    }
+  }
+  /* links every few steps */
+  if (++linkTick % 7 === 0){
+    links = [];
+    const RAD = 34, R2 = RAD*RAD;
+    for (let i=0;i<N && links.length<1500;i++){
+      for (let j=i+1;j<N && links.length<1500;j++){
+        const a=pts[i], b=pts[j];
+        const dx=a.x-b.x, dy=a.y-b.y, dz=a.z-b.z;
+        const d2 = dx*dx+dy*dy+dz*dz;
+        if (d2 < R2) links.push([i,j, 1-Math.sqrt(d2)/RAD]);
+      }
+    }
+  }
+}
+
+/* ---------------- main loop ---------------------------------- */
+let start = performance.now() - T0_OFFSET*1000;
+let flashA = 0;
+let lastBlip = 0;
+
+function restart(){
+  rng = mulberry32(TEST ? 42 : ((Math.random()*0xffffffff)|0));
+  start = performance.now();
+  bangDone = false; flashA = 0;
+  stopPad();
+  buildCloud();
+}
+
+function frame(now){
+  const t = ((now - start)/1000) % TL.total;
+  if (t < 0.05 && bangDone && (now-start)/1000 > TL.total - 0.1){ /* wrapped */ }
+  if ((now - start)/1000 >= TL.total) restart();
+
+  const afterBang = t > TL.bang;
+  if (afterBang && !bangDone){ bangDone = true; flashA = 1; bangSound(); }
+  if (!afterBang) bangDone = false;
+
+  /* --- camera: wide standoff → slow push into the manifold --- */
+  cam.base = Math.min(W/620, H/420);
+  const push = easeIO((t - TL.bang)/9);
+  cam.zoom = cam.base * lerp(1, 1.55, push);
+  cam.x = lerp(0, HEAD.x + 14, push);
+  cam.y = lerp(-105, HEAD.y - 14, push) + Math.sin(t*0.35)*2*push;
+  rotY = Math.max(0,(t - TL.bang))*0.13;
+
+  /* --- physics --- */
+  if (afterBang){
+    physics(t, 1/60);
+    /* hud values tick alive */
+    hudVals.a += (R()*2.4 - hudVals.a)*0.08;
+    hudVals.b += (R()*1.8 - hudVals.b)*0.08;
+    hudVals.c += (R()*0.9 - hudVals.c)*0.1;
+    for (let i=0;i<40;i++) cfc[i] += (Math.pow(R(),2) - cfc[i])*0.12;
+    if (t - lastBlip > 0.35 && t > TL.settle && t < TL.fade){ lastBlip = t; blip(); }
+  } else {
+    hudVals.a*=0.9; hudVals.b*=0.9; hudVals.c*=0.9;
+    for (let i=0;i<40;i++) cfc[i]*=0.9;
+  }
+
+  /* ================= draw ================= */
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,W,H);
+
+  /* ground fog + horizon */
+  const gy = worldToScreen(0,0).y;
+  const fogGrad = ctx.createLinearGradient(0, gy-90, 0, gy+40);
+  fogGrad.addColorStop(0,'rgba(30,40,60,0)');
+  fogGrad.addColorStop(1,'rgba(30,40,60,0.16)');
+  ctx.fillStyle = fogGrad;
+  ctx.fillRect(0, gy-90, W, 140);
+  ctx.strokeStyle = 'rgba(120,140,180,.14)';
+  ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+
+  /* figures (fade slightly as camera pushes into the cloud) */
+  const figAlpha = lerp(1, 0.5, easeIO((t-TL.bang-2)/6));
+  ctx.save();
+  ctx.translate(W/2, H/2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+  const muzzle = drawShooter(t, figAlpha);
+  drawVictim(t, figAlpha);
+  /* muzzle flash + tracer */
+  if (afterBang && t < TL.bang + 0.16){
+    const fa = 1-(t-TL.bang)/0.16;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(255,240,200,${fa})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(muzzle.mx, muzzle.my); ctx.lineTo(HEAD.x, HEAD.y); ctx.stroke();
+    ctx.fillStyle = `rgba(255,235,190,${fa})`;
+    for (let k=0;k<7;k++){
+      const a = k/7*6.28 + 0.3;
+      ctx.beginPath();
+      ctx.moveTo(muzzle.mx, muzzle.my);
+      ctx.lineTo(muzzle.mx + Math.cos(a)*(14+8*fa), muzzle.my + Math.sin(a)*(9+5*fa));
+      ctx.lineTo(muzzle.mx + Math.cos(a+0.32)*5, muzzle.my + Math.sin(a+0.32)*5);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.restore();
+
+  /* ================= the manifold ================= */
+  if (afterBang){
+    const cloudA = clamp((t - TL.bang)*3, 0, 1);
+    const linkA  = easeIO((t - TL.settle)/1.6);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 0.6;
+
+    /* links */
+    if (linkA > 0){
+      for (const [i,j,w] of links){
+        const a = pts[i], b = pts[j];
+        const pa = proj(a.x,a.y,a.z), pb = proj(b.x,b.y,b.z);
+        const col = a.white ? '255,255,255' : hueRGB(a.hue);
+        ctx.strokeStyle = `rgba(${col},${(w*0.18*linkA*cloudA).toFixed(3)})`;
+        ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke();
+      }
+      /* white trajectory polyline through the anchors */
+      ctx.strokeStyle = `rgba(255,255,255,${0.5*linkA*cloudA})`;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      traj.forEach((idx,k)=>{
+        const p = pts[idx], pp = proj(p.x,p.y,p.z);
+        k ? ctx.lineTo(pp.x,pp.y) : ctx.moveTo(pp.x,pp.y);
+      });
+      ctx.stroke();
+      ctx.lineWidth = 0.6;
+    }
+
+    /* nodes + labels */
+    const labelFont = '9px ui-monospace,Menlo,monospace';
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    for (const p of pts){
+      const pp = proj(p.x, p.y, p.z);
+      if (pp.x < -40 || pp.x > W+40 || pp.y < -40 || pp.y > H+40) continue;
+      const depth = clamp(1 - pp.z/260, 0.25, 1.15);
+      const col = p.white ? '255,255,255' : hueRGB(p.hue);
+      const a = cloudA * depth;
+      const s = p.s * pp.sc * 0.9;
+      if (p.big){
+        /* anchor: bright box + main value + sub-readouts */
+        ctx.strokeStyle = `rgba(${col},${a})`;
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(pp.x - s*3, pp.y - s*3, s*6, s*6);
+        ctx.lineWidth = 0.6;
+        ctx.fillStyle = `rgba(${col},${a})`;
+        ctx.font = `${Math.max(10, 13*pp.sc/cam.base/2.2)}px ui-monospace,Menlo,monospace`;
+        ctx.fillText(p.lab, pp.x + s*3 + 4, pp.y - 2);
+        ctx.font = labelFont;
+        ctx.fillStyle = `rgba(${col},${a*0.7})`;
+        ctx.fillText(p.sub[0], pp.x + s*3 + 4, pp.y + 9);
+        ctx.fillText(p.sub[1], pp.x + s*3 + 4, pp.y + 19);
+      } else {
+        ctx.strokeStyle = `rgba(${col},${a*0.9})`;
+        ctx.strokeRect(pp.x - s, pp.y - s, s*2, s*2);
+        ctx.fillStyle = `rgba(${col},${a})`;
+        ctx.fillRect(pp.x - s*0.4, pp.y - s*0.4, s*0.8, s*0.8);
+        /* value label, staggered in */
+        const la = p.hasLab ? clamp((t - TL.bang - 0.4 - p.born)*2, 0, 0.75) * depth * cloudA : 0;
+        if (la > 0.02){
+          ctx.font = labelFont;
+          ctx.fillStyle = `rgba(${col},${la})`;
+          ctx.fillText(p.lab, pp.x + s + 3, pp.y - 2);
+        }
+      }
+    }
+
+    /* droplets + ground stains */
+    ctx.font = labelFont;
+    for (const d of drops){
+      if (d.done) continue;
+      const pp = proj(d.x,d.y,d.z);
+      ctx.fillStyle = 'rgba(255,45,35,.9)';
+      ctx.fillRect(pp.x-1.4, pp.y-1.4, 2.8, 2.8);
+      ctx.fillStyle = 'rgba(255,45,35,.55)';
+      ctx.fillText(d.lab, pp.x+4, pp.y-2);
+    }
+    for (const s2 of stains){
+      const pp = proj(s2.x, 0, s2.z);
+      const sa = clamp(1-(t - s2.at)/9, 0, 0.6);
+      ctx.fillStyle = `rgba(255,40,30,${sa})`;
+      ctx.fillRect(pp.x-2, pp.y-0.8, 4, 1.6);
+      ctx.fillStyle = `rgba(255,40,30,${sa*0.7})`;
+      ctx.fillText(s2.lab, pp.x+5, pp.y-1);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* muzzle flash whole-screen kick */
+  if (flashA > 0.01){
+    ctx.fillStyle = `rgba(255,250,240,${flashA*0.55})`;
+    ctx.fillRect(0,0,W,H);
+    flashA *= 0.82;
+  }
+
+  /* vignette */
+  const vg = ctx.createRadialGradient(W/2,H/2, Math.min(W,H)*0.32, W/2,H/2, Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)');
+  vg.addColorStop(1,'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+
+  /* HUD */
+  drawHUD(t, afterBang, 1);
+
+  /* loop fade to black */
+  if (t > TL.fade){
+    const fa = easeIO((t - TL.fade)/(TL.total - TL.fade - 0.2));
+    ctx.fillStyle = `rgba(0,0,0,${fa})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(frame);
+}
+function hueRGB(h){
+  /* compact hsl→rgb for s=.9 l=.62, returns "r,g,b" */
+  const s=0.9, l=0.62;
+  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+  let r,g,b;
+  if(h<60){r=c;g=x;b=0}else if(h<120){r=x;g=c;b=0}else if(h<180){r=0;g=c;b=x}
+  else if(h<240){r=0;g=x;b=c}else if(h<300){r=x;g=0;b=c}else{r=c;g=0;b=x}
+  return `${((r+m)*255)|0},${((g+m)*255)|0},${((b+m)*255)|0}`;
+}
+
+/* ---------------- boot --------------------------------------- */
+function resize(){
+  dpr = Math.min(2, window.devicePixelRatio||1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+}
+window.addEventListener('resize', resize);
+canvas.addEventListener('pointerdown', ()=>{ audioInit(); restart(); });
+resize();
+buildCloud();
+/* test hook: jumping past the bang pre-integrates physics so
+   headless screenshots match real playback */
+if (TEST && T0_OFFSET > TL.bang){
+  for (let tt = TL.bang; tt < T0_OFFSET; tt += 1/60) physics(tt, 1/60);
+}
+requestAnimationFrame(frame);
+</script>
+
+<script>
+/* anonymous visit beacon — counts loads + presence heartbeats, no cookies */
+(function(){
+  if (location.protocol === "file:" || location.hostname === "localhost") return;
+  var EP = "https://site-analytics.vaibhavpro9210.workers.dev/ping";
+  var sid = sessionStorage.getItem("va_sid");
+  if (!sid) { sid = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem("va_sid", sid); }
+  function send(kind){
+    try { navigator.sendBeacon(EP, new Blob([JSON.stringify({sid:sid, page:location.pathname, kind:kind})], {type:"text/plain"})); } catch(e){}
+  }
+  send("load");
+  setInterval(function(){ if (document.visibilityState === "visible") send("beat"); }, 60000);
+})();
+</script>
+</body>
+</html>

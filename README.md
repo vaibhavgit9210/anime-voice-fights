@@ -1,46 +1,55 @@
-# Spatiotemporal Ballistic Manifold
+# Spatiotemporal Vocal Manifold
 
-Two silhouettes. One shot. The head doesn't splatter — it **resolves into data**:
-40 "cranial frequency coefficients" condensed by PCA into three principal
-dimensions, rendered as a drifting point-cloud manifold of boxed nodes, numeric
-readouts, and link-line webs.
+Speak, and watch your voice unfold as a live mathematical manifold — the
+pipeline from [Lucio Arese's *Visualizing Bird Songs: A Mathematical Model*](https://www.youtube.com/watch?v=cPFmcVtGnh0),
+running in realtime on **your microphone**.
 
 **Live:** https://vaibhavgit9210.github.io/anime-voice-fights/
 
-A homage to [Lucio Arese's *Visualizing Bird Songs: A Mathematical Model*](https://www.youtube.com/watch?v=cPFmcVtGnh0),
-where birdsong MFCCs become spatial acoustic manifolds — except here the
-"recording" is considerably more terminal.
+## The pipeline (real, not faked)
 
-## How it works
+Single self-contained `index.html` — no build step, no dependencies, no
+servers; audio never leaves the page.
 
-Single self-contained `index.html` — no build step, no dependencies, canvas 2D.
+1. **Mic → spectrum.** Web Audio `AnalyserNode`, 2048-point FFT per frame.
+2. **40 MFCCs.** A 40-filter mel filterbank (80 Hz – 8 kHz) → log energies →
+   DCT-II. Same descriptor family the birdsong video uses.
+3. **Streaming normalization.** Exact running mean early, then EMA z-scoring
+   per coefficient, clamped for stability.
+4. **Online PCA.** Sanger's rule (generalized Hebbian algorithm) learns the
+   top 3 principal components *while you speak* — the manifold's axes
+   literally self-organize to the structure of your voice.
+5. **Emission.** Each voiced frame (RMS gate with hysteresis, ~30 Hz) emits a
+   point into the 3D cloud: boxed node, 4-decimal readout, hue clustered by
+   manifold region (green → yellow → red), white anchors carrying real
+   spectral-centroid/spread sub-readouts. Proximity link-lines weave the web;
+   a bright white trajectory traces your last ~26 emissions in order; the
+   whole cloud slowly rotates. Oldest points fade once the cloud is full.
 
-- **Choreography** (~17s loop): standoff → arm raise → muzzle flash + tracer →
-  the victim's head bursts into ~240 particles that damp out of their ballistic
-  burst and self-organize onto a clustered 3D manifold (spring-to-target +
-  sinusoidal drift), while the camera pushes in and the cloud slowly rotates.
-- **The look**: additive-blended boxed nodes with 4-decimal value labels, hue
-  clustered by region (green → yellow → orange → red, white anchors with
-  sub-readouts), proximity link-lines recomputed every few frames, a white
-  trajectory polyline through the anchor nodes, and heavy red droplets that
-  fall under gravity and stain the ground with their own readouts.
-- **HUD**: impact spread / cranial centroid tickers, emission-time scrubber,
-  a 40-row CFC bar stack, and an italic specimen caption —
-  *Subject B (Homo Sapiens)*.
-- **Sound** (toggle, bottom-right): synthesized WebAudio — filtered-noise
-  gunshot with canyon echo delay, sub thump, detuned drone pad, data blips.
+HUD values are real too: spectral spread + centroid (kHz, red activity box
+while you're voiced), and 40 live MFCC magnitude bars. Caption:
+*Subject A (Homo Sapiens)* — you.
+
+No mic / permission denied? It falls back to a synthetic phoneme-hopping demo
+signal (labeled `DEMO SIGNAL (NO MIC)` in the HUD).
+
+## V0 · ballistic build
+
+The first version lives at [`legacy/`](https://vaibhavgit9210.github.io/anime-voice-fights/legacy/):
+two silhouettes, one gunshot, and the victim's head resolves into the same
+manifold vocabulary (a fixed, choreographed cloud — *Subject B*). Kept as an
+honest changelog.
 
 ## Test hooks (headless screenshots)
 
-- `?test` — seeded RNG, deterministic run
-- `?test&t=<sec>` — jump to a point in the loop; physics is pre-integrated so
-  the manifold state matches real playback
+- `?test` — seeded, auto-starts with the synthetic voice (no mic prompt)
+- `?test&t=<sec>` — pre-runs the full DSP/PCA/emission pipeline to that time
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless=new --disable-gpu --window-size=1280,800 \
   --virtual-time-budget=800 --screenshot=shot.png \
-  "file:///path/to/index.html?test&t=9"
+  "file:///path/to/index.html?test&t=45"
 ```
 
-Click anywhere to replay.
+Same hooks work on `legacy/index.html` (physics pre-integration instead).
