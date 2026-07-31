@@ -40,6 +40,16 @@ two silhouettes, one gunshot, and the victim's head resolves into the same
 manifold vocabulary (a fixed, choreographed cloud — *Subject B*). Kept as an
 honest changelog.
 
+## 360° orbit export
+
+**⏺ EXPORT 360° ORBIT** (bottom-right, once running) drives the manifold
+through exactly one horizontal revolution over 8 s while `MediaRecorder`
+films the canvas — video only, no audio, so the "nothing is recorded"
+promise holds. mp4 (H.264) where the browser can record it — the format
+WhatsApp / Instagram / the iOS gallery play natively — else webm. The
+rotation hands back to the ambient drift with no visible jump, and the
+exported frames carry the site URL bottom-left.
+
 ## Test hooks (headless screenshots)
 
 - `?test` — seeded, auto-starts with the synthetic voice (no mic prompt)

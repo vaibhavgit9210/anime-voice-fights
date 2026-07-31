@@ -37,6 +37,27 @@
     color:rgba(255,255,255,.28);font:10px ui-monospace,Menlo,monospace;letter-spacing:2px;
     transition:opacity 1s
   }
+  #rec360{
+    position:fixed;right:14px;bottom:12px;z-index:5;cursor:pointer;display:none;
+    background:none;border:1px solid rgba(255,255,255,.25);padding:8px 14px;
+    color:rgba(255,255,255,.45);font:10px ui-monospace,Menlo,monospace;letter-spacing:2px
+  }
+  #rec360:hover{color:#fff;border-color:rgba(255,255,255,.7)}
+  #vprev{
+    position:fixed;inset:0;z-index:20;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;background:rgba(0,0,0,.9);
+    color:#fff;text-align:center;padding:24px
+  }
+  #vprev.on{display:flex}
+  #vprev video{max-width:92vw;max-height:70vh;border:1px solid rgba(255,255,255,.25)}
+  #vprev .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+  #vprev .row button{
+    background:none;cursor:pointer;border:1px solid rgba(255,255,255,.4);
+    padding:11px 22px;color:rgba(255,255,255,.85);
+    font:11px ui-monospace,Menlo,monospace;letter-spacing:3px
+  }
+  #vprev .row button:hover{border-color:#fff;color:#fff}
+  #vprev .note{font:9px ui-monospace,Menlo,monospace;letter-spacing:2px;color:rgba(255,255,255,.3)}
 </style>
 </head>
 <body>
@@ -49,6 +70,16 @@
 </div>
 <a id="v0" href="legacy/">V0 &middot; BALLISTIC BUILD &rarr;</a>
 <div id="hint">SPEAK — THE MANIFOLD LISTENS</div>
+<button id="rec360">⏺ EXPORT 360° ORBIT</button>
+<div id="vprev">
+  <video id="vprevVid" autoplay loop muted playsinline></video>
+  <div class="row">
+    <button id="vShare">SHARE</button>
+    <button id="vSave">SAVE</button>
+    <button id="vClose">CLOSE</button>
+  </div>
+  <div class="note">ON A PHONE: SHARE &rarr; &ldquo;SAVE VIDEO&rdquo; PUTS IT IN YOUR GALLERY</div>
+</div>
 
 <script>
 'use strict';
@@ -348,14 +379,88 @@ function drawHUD(t){
   try{ ctx.letterSpacing='5px'; }catch(e){}
   ctx.fillText('Subject A  (Homo Sapiens)', W/2, H-52);
   try{ ctx.letterSpacing='0px'; }catch(e){}
+
+  /* the exported orbit carries the address home */
+  if (recOn){
+    ctx.textAlign='left';
+    ctx.font='10px ui-monospace,Menlo,monospace';
+    ctx.fillStyle='rgba(255,255,255,.4)';
+    ctx.fillText('vaibhavkumar.is-a.dev/anime-voice-fights', 14, H-18);
+  }
   ctx.restore();
 }
+
+/* ================= 360° orbit export =================
+   Drives rotY through one full horizontal revolution over
+   REC_DUR while MediaRecorder films the canvas (video only,
+   no audio — the mic never leaves the page), then hands the
+   rotation back with no visible jump. mp4 where the browser
+   can record it (WhatsApp/Instagram/iOS-gallery friendly),
+   webm elsewhere. */
+const REC_DUR = 8000;
+let rotOff = 0, recOn = false, recBase = 0, recT0 = 0, recorder = null, recFile = null;
+const rec360 = document.getElementById('rec360');
+function bestVideoMime(){
+  if (!window.MediaRecorder) return null;
+  const m = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  for (const t of m) if (MediaRecorder.isTypeSupported(t)) return t;
+  return null;
+}
+function startRec(){
+  if (recOn || !started) return;
+  const mime = bestVideoMime();
+  if (!mime){ rec360.textContent = 'VIDEO EXPORT UNSUPPORTED HERE'; return; }
+  const chunks = [];
+  try { recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: mime, videoBitsPerSecond: 10000000 }); }
+  catch(e){ rec360.textContent = 'VIDEO EXPORT UNSUPPORTED HERE'; return; }
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const ext = mime.indexOf('mp4') > -1 ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, { type: mime.split(';')[0] });
+    recFile = new File([blob], 'vocal-manifold-360.' + ext, { type: blob.type });
+    const v = document.getElementById('vprevVid');
+    v.src = URL.createObjectURL(blob);
+    document.getElementById('vShare').style.display =
+      (navigator.canShare && navigator.canShare({ files: [recFile] })) ? '' : 'none';
+    document.getElementById('vprev').classList.add('on');
+    rec360.textContent = '⏺ EXPORT 360° ORBIT';
+  };
+  recBase = rotY;
+  recT0 = performance.now();
+  recOn = true;
+  recorder.start(200);
+}
+function finishRec(t){
+  recOn = false;
+  rotOff = recBase - t*0.11;   // a full turn lands back on its start angle
+  setTimeout(() => { try{ recorder.stop(); }catch(e){} }, 150);
+}
+rec360.addEventListener('click', startRec);
+document.getElementById('vClose').addEventListener('click', function(){
+  document.getElementById('vprev').classList.remove('on');
+});
+document.getElementById('vSave').addEventListener('click', function(){
+  const a = document.createElement('a');
+  a.href = document.getElementById('vprevVid').src;
+  a.download = recFile.name;
+  a.click();
+});
+document.getElementById('vShare').addEventListener('click', function(){
+  navigator.share({ files: [recFile], title: 'vocal manifold' }).catch(function(){});
+});
 
 /* ================= render loop ================= */
 let t0 = 0;
 function frame(now){
   const t = (now - t0)/1000 + T0_OFFSET;
-  rotY = t*0.11;
+  if (recOn){
+    const k = Math.min(1, (now - recT0)/REC_DUR);
+    rotY = recBase + k*Math.PI*2;      // exactly one horizontal orbit
+    rec360.textContent = '⏺ ORBITING… ' + Math.ceil((REC_DUR - (now - recT0))/1000) + 's';
+    if (k >= 1) finishRec(t);
+  } else {
+    rotY = t*0.11 + rotOff;
+  }
   cam.zoom = Math.min(W,H)/300;
 
   const y = analyse(t);
@@ -482,6 +587,7 @@ async function begin(){
   if (started) return;
   started = true;
   ov.style.display='none';
+  rec360.style.display='block';
   if (TEST){
     srate = 48000; buildBank(srate); pcaInit();
     demoMode = true;
