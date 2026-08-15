@@ -4,7 +4,7 @@ Speak, and watch your voice unfold as a live mathematical manifold — the
 pipeline from [Lucio Arese's *Visualizing Bird Songs: A Mathematical Model*](https://www.youtube.com/watch?v=cPFmcVtGnh0),
 running in realtime on **your microphone**.
 
-**Live:** https://vaibhavgit9210.github.io/anime-voice-fights/
+**Live:** https://vaibhavkumar.is-a.dev/anime-voice-fights/
 
 ## The pipeline (real, not faked)
 
@@ -35,7 +35,7 @@ signal (labeled `DEMO SIGNAL (NO MIC)` in the HUD).
 
 ## V0 · ballistic build
 
-The first version lives at [`legacy/`](https://vaibhavgit9210.github.io/anime-voice-fights/legacy/):
+The first version lives at [`legacy/`](https://vaibhavkumar.is-a.dev/anime-voice-fights/legacy/):
 two silhouettes, one gunshot, and the victim's head resolves into the same
 manifold vocabulary (a fixed, choreographed cloud — *Subject B*). Kept as an
 honest changelog.
