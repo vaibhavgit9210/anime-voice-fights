@@ -88,6 +88,8 @@
     #ov .go,#rec360,#vprev .row button{transition:none}
     #ov .go:active,#rec360:active,#vprev .row button:active{transform:none}
   }
+  /* canvas text keeps the browser's default smoothing: body's antialiased would thin it on macOS */
+  canvas{-webkit-font-smoothing:auto}
 </style>
 </head>
 <body>

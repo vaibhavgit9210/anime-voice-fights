@@ -43,6 +43,8 @@
     #snd{transition:none}
     #snd:active{transform:none}
   }
+  /* canvas text keeps the browser's default smoothing: body's antialiased would thin it on macOS */
+  canvas{-webkit-font-smoothing:auto}
 </style>
 </head>
 <body>
